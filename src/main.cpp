@@ -14,6 +14,7 @@
 using namespace nlohmann;
 
 const char* TAG = "MAIN";
+int debug = 1; // Debug-Modus: 1 aktiviert, 0 deaktiviert
 
 enum lockStates
 {
@@ -53,7 +54,7 @@ struct LockManagement : Service::LockManagement
 
   LockManagement() : Service::LockManagement() {
 
-    LOG(D,"Configuring LockManagement"); // initialization message
+    if (debug) LOG(D,"Configuring LockManagement"); // initialization message
 
     lockControlPoint = new Characteristic::LockControlPoint();
     version = new Characteristic::Version();
@@ -86,17 +87,25 @@ int starttime = 0;
 void checktimer() {
   if (timeractive == true) {
     if (millis() - starttime > 5000) {
-    lockTargetState->setVal(lockStates::LOCKED);
-    lockCurrentState->setVal(lockStates::LOCKED);
-    timeractive = false;
-    Serial.print("Timer stopped");
-    digitalWrite(RELAY_PIN, LOW);
+      lockTargetState->setVal(lockStates::LOCKED);
+      lockCurrentState->setVal(lockStates::LOCKED);
+      timeractive = false;
+      if (debug) Serial.print("Timer stopped");
+      digitalWrite(RELAY_PIN, LOW);
     }
+  }
+}
+#define MEMORY_THRESHOLD 5000 // Schwellenwert in Bytes
+void checkMemory() {
+  size_t freeHeap = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+
+  if (freeHeap < MEMORY_THRESHOLD) {
+    ESP.restart();
   }
 }
 
 void checkiftolongrunning() {
-  if (millis() > 432000000) {
+  if (millis() > 86400000) {
     ESP.restart();
   }
 }
@@ -109,7 +118,7 @@ struct LockMechanism : Service::LockMechanism
   LockMechanism() : Service::LockMechanism() {
     memcpy(ecpData + 8, readerData.reader_identifier, sizeof(readerData.reader_identifier));
     with_crc16(ecpData, 16, ecpData + 16);
-    LOG(I, "Configuring LockMechanism"); // initialization message
+    if (debug) LOG(I, "Configuring LockMechanism"); // initialization message
     lockCurrentState = new Characteristic::LockCurrentState(1, true);
     lockTargetState = new Characteristic::LockTargetState(1, true);
   } // end constructor
@@ -117,7 +126,7 @@ struct LockMechanism : Service::LockMechanism
   boolean update(std::vector<char>* callback) {
     int targetState = lockTargetState->getNewVal();
     int currentState = lockCurrentState->getVal();
-    LOG(I, "New LockState=%d, Current LockState=%d", targetState, lockCurrentState->getVal());
+    if (debug) LOG(I, "New LockState=%d, Current LockState=%d", targetState, lockCurrentState->getVal());
     if (1 == 1) {
       if (targetState == lockStates::UNLOCKED) {
         digitalWrite(RELAY_PIN, HIGH);
@@ -125,23 +134,27 @@ struct LockMechanism : Service::LockMechanism
         lockCurrentState->setVal(lockStates::UNLOCKED);
         starttime = millis();
         timeractive = true;
-        Serial.print("Timer started");
+        if (debug) Serial.print("Timer started");
       }
       if (targetState == lockStates::LOCKED) {
         lockCurrentState->setVal(lockStates::LOCKED);
         lockTargetState->setVal(lockStates::LOCKED);
       }
       if (targetState != currentState) {
-        }
-      else {
+        // Empty block for future logic
+      } else {
+        // Empty block for future logic
       }
       if (MQTT_CUSTOM_STATE_ENABLED) {
         if (targetState == lockStates::UNLOCKED) {
-        }
-        else if(targetState == lockStates::LOCKED) {
+          // Custom state logic here
+        } else if(targetState == lockStates::LOCKED) {
+          // Custom state logic here
         }
       }
-    } else LOG(W, "MQTT Client not initialized, cannot publish message");
+    } else {
+      if (debug) LOG(W, "MQTT Client not initialized, cannot publish message");
+    }
 
     return (true);
   }
@@ -149,30 +162,31 @@ struct LockMechanism : Service::LockMechanism
   void loop() {
     checktimer();
     checkiftolongrunning();
+    checkMemory();
     uint8_t uid[16];
     uint8_t uidLen = 0;
     uint16_t atqa[1];
     uint8_t sak[1];
     bool passiveTarget = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLen, atqa, sak, 500, true);
     if (passiveTarget) {
-      LOG(D, "ATQA: %s", utils::bufToHexString(atqa, 1).c_str());
-      LOG(D, "SAK: %s", utils::bufToHexString(sak, 1).c_str());
-      LOG(D, "UID: %s", utils::bufToHexString(uid, uidLen).c_str());
-      LOG(I, "*** PASSIVE TARGET DETECTED ***");
+      if (debug) LOG(D, "ATQA: %s", utils::bufToHexString(atqa, 1).c_str());
+      if (debug) LOG(D, "SAK: %s", utils::bufToHexString(sak, 1).c_str());
+      if (debug) LOG(D, "UID: %s", utils::bufToHexString(uid, uidLen).c_str());
+      if (debug) LOG(I, "*** PASSIVE TARGET DETECTED ***");
       auto startTime = std::chrono::high_resolution_clock::now();
       uint8_t data[13] = { 0x00, 0xA4, 0x04, 0x00, 0x07, 0xA0, 0x00, 0x00, 0x08, 0x58, 0x01, 0x01, 0x0 };
       uint8_t selectCmdRes[32];
       uint8_t selectCmdResLength = 32;
-      LOG(D, "SELECT HomeKey Applet, APDU: %s", utils::bufToHexString(data, sizeof(data)).c_str());
+      if (debug) LOG(D, "SELECT HomeKey Applet, APDU: %s", utils::bufToHexString(data, sizeof(data)).c_str());
       nfc.inDataExchange(data, sizeof(data), selectCmdRes, &selectCmdResLength);
-      LOG(D, "SELECT HomeKey Applet, Response: %s, Length: %d", utils::bufToHexString(selectCmdRes, selectCmdResLength).c_str(), selectCmdResLength);
+      if (debug) LOG(D, "SELECT HomeKey Applet, Response: %s, Length: %d", utils::bufToHexString(selectCmdRes, selectCmdResLength).c_str(), selectCmdResLength);
       if (selectCmdRes[selectCmdResLength - 2] == 0x90 && selectCmdRes[selectCmdResLength - 1] == 0x00) {
-        LOG(D, "*** SELECT HOMEKEY APPLET SUCCESSFUL ***");
-        LOG(D, "Reader Private Key: %s", utils::bufToHexString((const uint8_t*)readerData.reader_private_key, sizeof(readerData.reader_private_key)).c_str());
+        if (debug) LOG(D, "*** SELECT HOMEKEY APPLET SUCCESSFUL ***");
+        if (debug) LOG(D, "Reader Private Key: %s", utils::bufToHexString((const uint8_t*)readerData.reader_private_key, sizeof(readerData.reader_private_key)).c_str());
         HKAuthenticationContext authCtx([](uint8_t* apdu, size_t apduLen, uint8_t* res, uint8_t* resLen) {  return nfc.inDataExchange(apdu, apduLen, res, resLen); }, readerData, savedData);
         auto authResult = authCtx.authenticate(hkFlow);
         if (std::get<2>(authResult) != homeKeyReader::kFlowFailed) {
-          Serial.print("Unlocking");
+          if (debug) Serial.print("Unlocking");
           json payload;
           payload["issuerId"] = utils::bufToHexString(std::get<0>(authResult), 8, true);
           payload["endpointId"] = utils::bufToHexString(std::get<1>(authResult), 6, true);
@@ -183,37 +197,43 @@ struct LockMechanism : Service::LockMechanism
               lockCurrentState->setVal(lockStates::UNLOCKED);
               lockTargetState->setVal(lockStates::UNLOCKED);
               if (MQTT_CUSTOM_STATE_ENABLED) {
+                // Custom state logic here
               }
             }
             else if (MQTT_HOMEKEY_ALWAYS_LOCK) {
               lockCurrentState->setVal(lockStates::LOCKED);
               lockTargetState->setVal(lockStates::LOCKED);
               if (MQTT_CUSTOM_STATE_ENABLED) {
+                // Custom state logic here
               }
             }
             else {
               if (MQTT_CUSTOM_STATE_ENABLED) {
                 int currentState = lockCurrentState->getVal();
                 if (currentState == lockStates::UNLOCKED) {
+                  // Custom state logic here
                 }
                 else if(currentState == lockStates::LOCKED) {
+                  // Custom state logic here
                 }
               }
             }
           }
-          else LOG(W, "MQTT Client not initialized, cannot publish message");
+          else {
+            if (debug) LOG(W, "MQTT Client not initialized, cannot publish message");
+          }
 
           auto stopTime = std::chrono::high_resolution_clock::now();
-          LOG(I, "Total Time (from detection to mqtt publish): %lli ms", std::chrono::duration_cast<std::chrono::milliseconds>(stopTime - startTime).count());
+          if (debug) LOG(I, "Total Time (from detection to mqtt publish): %lli ms", std::chrono::duration_cast<std::chrono::milliseconds>(stopTime - startTime).count());
           starttime = millis();
           digitalWrite(RELAY_PIN, HIGH);
           lockTargetState->setVal(lockStates::UNLOCKED);
           lockCurrentState->setVal(lockStates::UNLOCKED);
           timeractive = true;
-          Serial.print("unlcoked");
+          if (debug) Serial.print("unlcoked");
         }
         else {
-          LOG(W, "We got status FlowFailed, mqtt untouched!");
+          if (debug) LOG(W, "We got status FlowFailed, mqtt untouched!");
         }
       }
       else {
@@ -223,18 +243,21 @@ struct LockMechanism : Service::LockMechanism
         payload["uid"] = utils::bufToHexString(uid, uidLen, true);
         payload["homekey"] = false;
         if (1 == 1) {
-        } else LOG(W, "MQTT Client not initialized, cannot publish message");
+          // MQTT logic here
+        } else {
+          if (debug) LOG(W, "MQTT Client not initialized, cannot publish message");
+        }
       }
       delay(500);
       nfc.inRelease();
       nfc.setPassiveActivationRetries(10);
       bool deviceStillInField = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLen);
-      LOG(V, "Target still present: %d", deviceStillInField);
+      if (debug) LOG(V, "Target still present: %d", deviceStillInField);
       while (deviceStillInField) {
         delay(300);
         nfc.inRelease();
         deviceStillInField = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLen);
-        LOG(V, "Target still present: %d", deviceStillInField);
+        if (debug) LOG(V, "Target still present: %d", deviceStillInField);
       }
       nfc.inRelease();
       nfc.setPassiveActivationRetries(0);
@@ -256,7 +279,7 @@ struct NFCAccess : Service::NFCAccess
   const char* TAG = "NFCAccess";
 
   NFCAccess() : Service::NFCAccess() {
-    LOG(I, "Configuring NFCAccess"); // initialization message
+    if (debug) LOG(I, "Configuring NFCAccess"); // initialization message
     configurationState = new Characteristic::ConfigurationState();
     nfcControlPoint = new Characteristic::NFCAccessControlPoint();
     nfcSupportedConfiguration = new Characteristic::NFCAccessSupportedConfiguration();
@@ -264,18 +287,17 @@ struct NFCAccess : Service::NFCAccess
 
 
   boolean update(std::vector<char>* callback) {
-    LOG(D, "PROVISIONED READER KEY: %s", utils::bufToHexString(readerData.reader_private_key, sizeof(readerData.reader_private_key)).c_str());
-    LOG(D, "READER GROUP IDENTIFIER: %s", utils::bufToHexString(readerData.reader_identifier, sizeof(readerData.reader_identifier)).c_str());
-    LOG(D, "READER UNIQUE IDENTIFIER: %s", utils::bufToHexString(readerData.identifier, sizeof(readerData.identifier)).c_str());
+    if (debug) LOG(D, "PROVISIONED READER KEY: %s", utils::bufToHexString(readerData.reader_private_key, sizeof(readerData.reader_private_key)).c_str());
+    if (debug) LOG(D, "READER GROUP IDENTIFIER: %s", utils::bufToHexString(readerData.reader_identifier, sizeof(readerData.reader_identifier)).c_str());
+    if (debug) LOG(D, "READER UNIQUE IDENTIFIER: %s", utils::bufToHexString(readerData.identifier, sizeof(readerData.identifier)).c_str());
 
-    // char* dataConfState = configurationState->getNewString(); // Underlying functionality currently unknown
     char* dataNfcControlPoint = nfcControlPoint->getNewString();
-    LOG(D, "NfcControlPoint Length: %d", strlen(dataNfcControlPoint));
+    if (debug) LOG(D, "NfcControlPoint Length: %d", strlen(dataNfcControlPoint));
     std::vector<uint8_t> decB64 = utils::decodeB64(dataNfcControlPoint);
     if (decB64.size() == 0)
       return false;
-    LOG(D, "Decoded data: %s", utils::bufToHexString(decB64.data(), decB64.size()).c_str());
-    LOG(D, "Decoded data length: %d", decB64.size());
+    if (debug) LOG(D, "Decoded data: %s", utils::bufToHexString(decB64.data(), decB64.size()).c_str());
+    if (debug) LOG(D, "Decoded data length: %d", decB64.size());
     HK_HomeKit hkCtx(readerData, savedData, "READERDATA");
     std::vector<uint8_t> result = hkCtx.processResult(decB64);
     callback->insert(callback->end(), result.begin(), result.end());
@@ -293,10 +315,10 @@ void deleteReaderData(const char* buf) {
   std::fill(readerData.reader_private_key, readerData.reader_private_key + 32, 0);
   esp_err_t erase_nvs = nvs_erase_key(savedData, "READERDATA");
   esp_err_t commit_nvs = nvs_commit(savedData);
-  LOG1("*** NVS W STATUS");
-  LOG1("ERASE: %s", esp_err_to_name(erase_nvs));
-  LOG1("COMMIT: %s", esp_err_to_name(commit_nvs));
-  LOG1("*** NVS W STATUS");
+  if (debug) LOG1("*** NVS W STATUS");
+  if (debug) LOG1("ERASE: %s", esp_err_to_name(erase_nvs));
+  if (debug) LOG1("COMMIT: %s", esp_err_to_name(commit_nvs));
+  if (debug) LOG1("*** NVS W STATUS");
 }
 
 void pairCallback(bool isPaired) {
@@ -309,13 +331,13 @@ void pairCallback(bool isPaired) {
         for (auto it=HAPClient::controllerList.begin();it!=HAPClient::controllerList.end();it++) {
           if ((*it).allocated) {
             std::vector<uint8_t> id = utils::getHashIdentifier((*it).LTPK, 32, true);
-            LOG(D, "Found allocated controller - Hash: %s", utils::bufToHexString(id.data(), 8).c_str());
+            if (debug) LOG(D, "Found allocated controller - Hash: %s", utils::bufToHexString(id.data(), 8).c_str());
             if (!memcmp(x.publicKey, id.data(), 8)) {
               return false;
             }
           }
         }
-        LOG(D, "Issuer ID: %s - Associated controller was removed from Home, erasing from reader data.", utils::bufToHexString(x.issuerId, 8).c_str());
+        if (debug) LOG(D, "Issuer ID: %s - Associated controller was removed from Home, erasing from reader data.", utils::bufToHexString(x.issuerId, 8).c_str());
         return true;
       }),
       readerData.issuers.end());
@@ -324,17 +346,17 @@ void pairCallback(bool isPaired) {
     for (auto it=HAPClient::controllerList.begin();it!=HAPClient::controllerList.end();it++) {
       if ((*it).allocated) {
         std::vector<uint8_t> id = utils::getHashIdentifier((*it).LTPK, 32, true);
-        LOG(D, "Found allocated controller - Hash: %s", utils::bufToHexString(id.data(), 8).c_str());
+        if (debug) LOG(D, "Found allocated controller - Hash: %s", utils::bufToHexString(id.data(), 8).c_str());
         homeKeyIssuer::issuer_t* foundIssuer = nullptr;
         for (auto& issuer : readerData.issuers) {
           if (!memcmp(issuer.issuerId, id.data(), 8)) {
-            LOG(D, "Issuer %s already added, skipping", utils::bufToHexString(issuer.issuerId, 8).c_str());
+            if (debug) LOG(D, "Issuer %s already added, skipping", utils::bufToHexString(issuer.issuerId, 8).c_str());
             foundIssuer = &issuer;
             break;
           }
         }
         if (foundIssuer == nullptr) {
-          LOG(D, "Adding new issuer - ID: %s", utils::bufToHexString(id.data(), 8).c_str());
+          if (debug) LOG(D, "Adding new issuer - ID: %s", utils::bufToHexString(id.data(), 8).c_str());
           homeKeyIssuer::issuer_t issuer;
           memcpy(issuer.issuerId, id.data(), 8);
           memcpy(issuer.publicKey, (*it).LTPK, 32);
@@ -350,20 +372,20 @@ void setFlow(const char* buf) {
   switch (buf[1]) {
   case '0':
     hkFlow = homeKeyReader::KeyFlow::kFlowFAST;
-    Serial.println("FAST Flow");
+    if (debug) Serial.println("FAST Flow");
     break;
 
   case '1':
     hkFlow = homeKeyReader::KeyFlow::kFlowSTANDARD;
-    Serial.println("STANDARD Flow");
+    if (debug) Serial.println("STANDARD Flow");
     break;
   case '2':
     hkFlow = homeKeyReader::KeyFlow::kFlowATTESTATION;
-    Serial.println("ATTESTATION Flow");
+    if (debug) Serial.println("ATTESTATION Flow");
     break;
 
   default:
-    Serial.println("0 = FAST flow, 1 = STANDARD Flow, 2 = ATTESTATION Flow");
+    if (debug) Serial.println("0 = FAST flow, 1 = STANDARD Flow, 2 = ATTESTATION Flow");
     break;
   }
 }
@@ -372,27 +394,27 @@ void setLogLevel(const char* buf) {
   esp_log_level_t level = esp_log_level_get("*");
   if (strncmp(buf + 1, "E", 1) == 0) {
     level = ESP_LOG_ERROR;
-    Serial.println("ERROR");
+    if (debug) Serial.println("ERROR");
   }
   else if (strncmp(buf + 1, "W", 1) == 0) {
     level = ESP_LOG_WARN;
-    Serial.println("WARNING");
+    if (debug) Serial.println("WARNING");
   }
   else if (strncmp(buf + 1, "I", 1) == 0) {
     level = ESP_LOG_INFO;
-    Serial.println("INFO");
+    if (debug) Serial.println("INFO");
   }
   else if (strncmp(buf + 1, "D", 1) == 0) {
     level = ESP_LOG_DEBUG;
-    Serial.println("DEBUG");
+    if (debug) Serial.println("DEBUG");
   }
   else if (strncmp(buf + 1, "V", 1) == 0) {
     level = ESP_LOG_VERBOSE;
-    Serial.println("VERBOSE");
+    if (debug) Serial.println("VERBOSE");
   }
   else if (strncmp(buf + 1, "N", 1) == 0) {
     level = ESP_LOG_NONE;
-    Serial.println("NONE");
+    if (debug) Serial.println("NONE");
   }
 
   esp_log_level_set("*", level);
@@ -409,7 +431,7 @@ void insertDummyIssuers(const char* buf) {
   unsigned int iterations;
   strVal >> iterations;
   if (iterations > 64) {
-    Serial.print("\nInvalid Argument\n");
+    if (debug) Serial.print("\nInvalid Argument\n");
     return;
   }
   for (size_t i = 0; i < iterations; i++) {
@@ -459,18 +481,14 @@ void insertDummyIssuers(const char* buf) {
 
 void print_issuers(const char* buf) {
   const char* TAG = "print_issuers";
-  LOG(I, "HOMEKEY ISSUERS: %d", readerData.issuers.size());
+  if (debug) LOG(I, "HOMEKEY ISSUERS: %d", readerData.issuers.size());
   for (auto& issuer : readerData.issuers) {
-    LOG(D, "Issuer ID: %s, Public Key: %s", utils::bufToHexString(issuer.issuerId, sizeof(issuer.issuerId)).c_str(), utils::bufToHexString(issuer.publicKey, sizeof(issuer.publicKey)).c_str());
+    if (debug) LOG(D, "Issuer ID: %s, Public Key: %s", utils::bufToHexString(issuer.issuerId, sizeof(issuer.issuerId)).c_str(), utils::bufToHexString(issuer.publicKey, sizeof(issuer.publicKey)).c_str());
     for (auto& endpoint : issuer.endpoints) {
-      LOG(D, "Endpoint ID: %s, Public Key: %s", utils::bufToHexString(endpoint.endpointId, sizeof(endpoint.endpointId)).c_str(), utils::bufToHexString(endpoint.publicKey, sizeof(endpoint.publicKey)).c_str());
+      if (debug) LOG(D, "Endpoint ID: %s, Public Key: %s", utils::bufToHexString(endpoint.endpointId, sizeof(endpoint.endpointId)).c_str(), utils::bufToHexString(endpoint.publicKey, sizeof(endpoint.publicKey)).c_str());
     }
   }
 }
-
-
-
-
 
 void setup() {
   Serial.begin(115200);
@@ -482,9 +500,9 @@ void setup() {
   if (!nvs_get_blob(savedData, "READERDATA", NULL, &len)) {
     uint8_t msgpack[len];
     nvs_get_blob(savedData, "READERDATA", msgpack, &len);
-    LOG(V, "READERDATA - MSGPACK(%d): %s", len, utils::bufToHexString(msgpack, len).c_str());
+    if (debug) LOG(V, "READERDATA - MSGPACK(%d): %s", len, utils::bufToHexString(msgpack, len).c_str());
     json data = json::from_msgpack(msgpack, msgpack + len);
-    LOG(D, "READERDATA - JSON(%d): %s", len, data.dump(-1).c_str());
+    if (debug) LOG(D, "READERDATA - JSON(%d): %s", len, data.dump(-1).c_str());
     homeKeyReader::readerData_t p = data.template get<homeKeyReader::readerData_t>();
     readerData = p;
   }
@@ -496,12 +514,12 @@ void setup() {
   homeSpan.setLogLevel(0);
   homeSpan.setSketchVersion(app_version.c_str());
 
-  LOG(D, "READER GROUP ID (%d): %s", strlen((const char*)readerData.reader_identifier), utils::bufToHexString(readerData.reader_identifier, sizeof(readerData.reader_identifier)).c_str());
-  LOG(D, "READER UNIQUE ID (%d): %s", strlen((const char*)readerData.identifier), utils::bufToHexString(readerData.identifier, sizeof(readerData.identifier)).c_str());
+  if (debug) LOG(D, "READER GROUP ID (%d): %s", strlen((const char*)readerData.reader_identifier), utils::bufToHexString(readerData.reader_identifier, sizeof(readerData.reader_identifier)).c_str());
+  if (debug) LOG(D, "READER UNIQUE ID (%d): %s", strlen((const char*)readerData.identifier), utils::bufToHexString(readerData.identifier, sizeof(readerData.identifier)).c_str());
 
-  LOG(I, "HOMEKEY ISSUERS: %d", readerData.issuers.size());
+  if (debug) LOG(I, "HOMEKEY ISSUERS: %d", readerData.issuers.size());
   for (auto& issuer : readerData.issuers) {
-    LOG(D, "Issuer ID: %s, Public Key: %s", utils::bufToHexString(issuer.issuerId, sizeof(issuer.issuerId)).c_str(), utils::bufToHexString(issuer.publicKey, sizeof(issuer.publicKey)).c_str());
+    if (debug) LOG(D, "Issuer ID: %s, Public Key: %s", utils::bufToHexString(issuer.issuerId, sizeof(issuer.issuerId)).c_str(), utils::bufToHexString(issuer.publicKey, sizeof(issuer.publicKey)).c_str());
   }
   homeSpan.enableOTA(OTA_PWD);
   homeSpan.begin(Category::Locks, NAME);
@@ -515,7 +533,7 @@ void setup() {
     for (auto&& issuer : readerData.issuers) {
       issuer.endpoints.clear();
     }
-    });
+  });
 
   nfc.begin();
 
@@ -534,7 +552,7 @@ void setup() {
   new SpanAccessory();                 // Begin by creating a new Accessory using SpanAccessory(), no arguments needed
   new Service::AccessoryInformation(); // HAP requires every Accessory to implement an AccessoryInformation Service, with the required Identify Characteristic
   new Characteristic::Identify();
-  new Characteristic::Manufacturer("The Beck Company");
+  new Characteristic::Manufacturer("The Company");
   new Characteristic::Model("Premium Lock");
   new Characteristic::Name(NAME);
   uint8_t mac[6];
